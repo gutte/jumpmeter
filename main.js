@@ -5,7 +5,18 @@ var loggingOn = false;
 var readingX=0;
 var readingY=64;
 var readingZ=0;
-var takeoff=0;
+var t1=0;
+var t2=0;
+var t3=0;
+var l=0;
+var jumpcount=0;
+
+var echologlevel=2;			//how much info the program should output
+var jumpresettime = 900; 		//jump reset time in milliseconds
+
+
+
+
 
 noble.on('stateChange', function(state) {
   if (state === 'poweredOn') {
@@ -77,7 +88,7 @@ noble.on('discover', function(peripheral) {
 								logdata(dimension,data.readInt8(0),Date.now()-basetime);
 							});
 						});
-						console.log('Jump device found. Starting logging!');
+						console.log('Jump device found.\nLogging started...');
 						loggingOn=true;
 						setTimeout(function () {
 							lighton();
@@ -106,37 +117,98 @@ function errorlog(err) {
 function logdata(variable,data,timest) {
 	if (loggingOn) {
 		loginfo="";
+		
+		//test for event (takeoff/landing)
+		
+		//T1 can be initiated anytime
+		if (variable == 2){
+			if (readingY>96 && data<64){
+				t1=timest;
+				loginfo="T1 (0)";
+			}
+		}
+		
+		//if T1 initiated test for other events
+		if (t1 != 0) {
+			//landing: y var condition
+			if ( (variable == 2) && (readingY<64 && data>96) ){
+				l=timest;
+				tldiff=l-t1;
+				loginfo="L ("+tldiff+")";
+				jumpcount++;
+			}
+			// T2 and T3, z var conditions
+			if (variable == 3){
+				if (readingZ< -30 && data> -30){
+					diff=timest-t1;
+					if (diff<200) {
+						loginfo="T2 ("+diff+")";
+						t2=timest;
+						t2diff=diff;
+					}
+				} else if (readingZ < -15 && data> -15){
+					diff=timest-t1;
+					if (diff<200) {
+						loginfo="T3 ("+diff+")";
+						t3=timest;
+						t3diff=diff;
+					}
+				}
+			}
+		}
+		
+		//store value **** APPLY REAL TIME SERIES LOGGING HERE ****
 		if (variable == 1){
 			readingX=data;
-		}
-		if (variable == 2){
-			if (readingY>100 && data<60){
-				takeoff=timest;
-				loginfo="T1 (0)";
-			} else if (readingY<30 && data>100) {
-				diff=timest-takeoff;
-				if (diff<1000) {
-					loginfo="L ("+diff+")";
-				}
-			}
+		} else if (variable == 2){
 			readingY=data;
-		}
-		if (variable == 3){
-			if (readingZ< -70 && data> -30){
-				diff=timest-takeoff;
-				if (diff<200) {
-					loginfo="T2 ("+diff+")";
-				}
-			} else if (readingZ < -15 && data> -15){
-				diff=timest-takeoff;
-				if (diff<200) {
-					loginfo="T3 ("+diff+")";
-				}
-			}
+		} else if (variable == 3){
 			readingZ=data;
 		}
-		console.log(" ",timest, readingX, readingY, readingZ, loginfo);
+		
+		// output to console
+		if (echologlevel==2) {
+			console.log(" ",timest, readingX, readingY, readingZ, loginfo);
+		} else if ((echologlevel==1) && (l != 0)) {
+			console.log(" ",t1, "T1 (0)");
+			if (t2 != 0) {
+				console.log(" ",t2, "T2 (",t2diff,")");
+			}
+			if (t3 != 0) {			
+				console.log(" ",t3, "T3 (",t3diff,")");
+			}
+			console.log(" ",timest, loginfo);
+		} else if ((echologlevel==0) && (l != 0)) {
+			if (t3 != 0 ) {
+				tluse=tldiff-t3diff;
+				tlmethod=3;
+			} else if (t2 != 0 ) {
+				tluse=tldiff-t2diff;
+				tlmethod=2;
+			} else {
+				tluse=tldiff;
+				tlmethod=1;
+			}
+			h=getjumpheight(tluse);
+			if (jumpcount == 1) {
+				console.log(" jump #\t\tt (ms)\t\th (cm)\t\tmethod");
+			}
+			console.log(" ",jumpcount,"\t\t",tluse,"\t\t",h,"\t\t",tlmethod);
+		}
+		// reset jump if landed or timeout
+		if ((timest-t1 >= jumpresettime) || (l != 0)) {
+			jumpreset();
+		}
 	}
+}
+function jumpreset(){
+	t1=0;
+	t2=0;
+	t3=0;
+	t2diff=0;
+	t3diff=0;
+	l=0;
+	tldiff=0;
 }
 
 function lighton() {
@@ -151,6 +223,10 @@ function lightoff() {
 	lightCharacteristic.write(light, false, function() {});
 }
 
+function getjumpheight(tms) {
+	//9.81*(tms/1000)^2/8*100
+	return Math.round(9.81*(tms/1000)*(tms/1000)/8*100);
+}
 
 
 // service.on('characteristicsDiscover', callback(characteristics));
@@ -181,7 +257,7 @@ characteristic = {
 
 
 
-// enter to exit program
+// exit program stuff
 
 
 var stdin = process.stdin;
